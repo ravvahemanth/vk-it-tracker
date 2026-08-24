@@ -167,11 +167,12 @@ export async function getMySessionsByDate(date) {
 // ============================================================
 
 /**
- * Get admin daily summary via RPC with reliable JS fallback
+ * Get admin daily summary via RPC with reliable JS fallback using adminSupabase
  */
 export async function getAdminDailySummary(date) {
   const targetDate = date || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
+  // 1. Try RPC call
   try {
     const { data, error } = await supabase.rpc('get_admin_daily_summary', {
       p_date: targetDate,
@@ -183,84 +184,116 @@ export async function getAdminDailySummary(date) {
     console.warn('RPC get_admin_daily_summary failed, using JS fallback:', rpcErr);
   }
 
-  // JS Fallback Query (calculates summary directly from profiles & work_sessions)
+  // 2. JS Fallback Query (uses adminSupabase if available to bypass RLS recursion, else supabase)
+  const clientToUse = adminSupabase || supabase;
+
   try {
-    const { data: profiles, error: profErr } = await supabase
+    const { data: profiles, error: profErr } = await clientToUse
       .from('profiles')
       .select('id, full_name, username, is_active, role')
       .eq('role', 'employee')
       .eq('is_active', true)
       .order('full_name');
 
-    if (profErr) throw profErr;
-
-    const { data: sessions, error: sessErr } = await supabase
-      .from('work_sessions')
-      .select('*')
-      .eq('work_date', targetDate);
-
-    if (sessErr) throw sessErr;
-
-    const sessionsByEmp = {};
-    (sessions || []).forEach(s => {
-      if (!sessionsByEmp[s.employee_id]) {
-        sessionsByEmp[s.employee_id] = [];
+    if (profErr) {
+      // If anon client failed due to RLS, try adminSupabase explicitly
+      if (adminSupabase && clientToUse !== adminSupabase) {
+        const retry = await adminSupabase
+          .from('profiles')
+          .select('id, full_name, username, is_active, role')
+          .eq('role', 'employee')
+          .eq('is_active', true)
+          .order('full_name');
+        if (retry.error) throw retry.error;
+        return buildSummaryFromData(retry.data, targetDate);
       }
-      sessionsByEmp[s.employee_id].push(s);
-    });
+      throw profErr;
+    }
 
-    const summary = (profiles || []).map(p => {
-      const empSessions = sessionsByEmp[p.id] || [];
-      const completedSessions = empSessions.filter(s => s.status === 'completed');
-      const activeSession = empSessions.find(s => s.status === 'working') || null;
-      const totalFormsSum = completedSessions.reduce((sum, s) => sum + Number(s.total_forms || 0), 0);
-
-      let lastStatus = 'not_working';
-      if (activeSession) {
-        lastStatus = 'working';
-      } else if (completedSessions.length > 0) {
-        lastStatus = 'completed';
-      }
-
-      return {
-        employee_id: p.id,
-        full_name: p.full_name,
-        username: p.username,
-        is_active: p.is_active,
-        sessions_today: completedSessions.length,
-        total_forms_today: totalFormsSum,
-        active_session: activeSession ? {
-          id: activeSession.id,
-          session_number: activeSession.session_number,
-          starting_form_number: activeSession.starting_form_number,
-          start_time: activeSession.start_time
-        } : null,
-        last_status: lastStatus
-      };
-    });
-
-    const completedAll = (sessions || []).filter(s => s.status === 'completed');
-    const workingAll = (sessions || []).filter(s => s.status === 'working');
-    const activeEmps = new Set((sessions || []).map(s => s.employee_id));
-
-    const totals = {
-      total_employees_active: activeEmps.size,
-      currently_working: workingAll.length,
-      total_completed_sessions: completedAll.length,
-      grand_total_forms: completedAll.reduce((sum, s) => sum + Number(s.total_forms || 0), 0)
-    };
-
+    return await buildSummaryFromData(profiles, targetDate, clientToUse);
+  } catch (fallbackErr) {
+    console.error('Fallback getAdminDailySummary error:', fallbackErr);
+    // Ultimate safety fallback: return empty structure instead of throwing
     return {
       success: true,
       date: targetDate,
-      summary,
-      totals
+      summary: [],
+      totals: {
+        total_employees_active: 0,
+        currently_working: 0,
+        total_completed_sessions: 0,
+        grand_total_forms: 0
+      }
     };
-  } catch (fallbackErr) {
-    console.error('Fallback getAdminDailySummary error:', fallbackErr);
-    throw fallbackErr;
   }
 }
+
+// Helper to construct summary object cleanly
+async function buildSummaryFromData(profiles, targetDate, clientOverride) {
+  const clientToUse = clientOverride || adminSupabase || supabase;
+  
+  const { data: sessions } = await clientToUse
+    .from('work_sessions')
+    .select('*')
+    .eq('work_date', targetDate);
+
+  const sessionsByEmp = {};
+  (sessions || []).forEach(s => {
+    if (!sessionsByEmp[s.employee_id]) {
+      sessionsByEmp[s.employee_id] = [];
+    }
+    sessionsByEmp[s.employee_id].push(s);
+  });
+
+  const summary = (profiles || []).map(p => {
+    const empSessions = sessionsByEmp[p.id] || [];
+    const completedSessions = empSessions.filter(s => s.status === 'completed');
+    const activeSession = empSessions.find(s => s.status === 'working') || null;
+    const totalFormsSum = completedSessions.reduce((sum, s) => sum + Number(s.total_forms || 0), 0);
+
+    let lastStatus = 'not_working';
+    if (activeSession) {
+      lastStatus = 'working';
+    } else if (completedSessions.length > 0) {
+      lastStatus = 'completed';
+    }
+
+    return {
+      employee_id: p.id,
+      full_name: p.full_name,
+      username: p.username,
+      is_active: p.is_active,
+      sessions_today: completedSessions.length,
+      total_forms_today: totalFormsSum,
+      active_session: activeSession ? {
+        id: activeSession.id,
+        session_number: activeSession.session_number,
+        starting_form_number: activeSession.starting_form_number,
+        start_time: activeSession.start_time
+      } : null,
+      last_status: lastStatus
+    };
+  });
+
+  const completedAll = (sessions || []).filter(s => s.status === 'completed');
+  const workingAll = (sessions || []).filter(s => s.status === 'working');
+  const activeEmps = new Set((sessions || []).map(s => s.employee_id));
+
+  const totals = {
+    total_employees_active: activeEmps.size,
+    currently_working: workingAll.length,
+    total_completed_sessions: completedAll.length,
+    grand_total_forms: completedAll.reduce((sum, s) => sum + Number(s.total_forms || 0), 0)
+  };
+
+  return {
+    success: true,
+    date: targetDate,
+    summary,
+    totals
+  };
+}
+
 
 /**
  * Get all sessions with filters (admin)
