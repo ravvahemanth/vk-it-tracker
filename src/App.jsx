@@ -10,9 +10,11 @@ import AdminSessions from './pages/admin/AdminSessions';
 import AdminReports from './pages/admin/AdminReports';
 import EmployeeLayout from './layouts/EmployeeLayout';
 import AdminLayout from './layouts/AdminLayout';
+import OfflineBanner from './components/OfflineBanner';
 import ConfigBanner from './components/ConfigBanner';
 
 export default function App() {
+
   return (
     <>
       <ConfigBanner />
