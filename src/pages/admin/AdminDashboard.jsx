@@ -4,22 +4,26 @@ import { supabase } from '../../services/supabase';
 import { getTodayIST, formatTime, formatDate } from '../../utils/dateTime';
 import {
   MdPeople, MdWork, MdCheckCircle, MdAssignment,
-  MdRefresh, MdError, MdTrendingUp, MdSchedule
+  MdRefresh, MdError, MdSchedule, MdTrendingUp, MdLeaderboard
 } from 'react-icons/md';
 
 export default function AdminDashboard() {
   const today = getTodayIST();
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
   const realtimeRef = useRef(null);
 
-  const loadSummary = useCallback(async () => {
+  const loadSummary = useCallback(async (isManualRefresh = false) => {
+    if (isManualRefresh) {
+      setIsRefreshing(true);
+    }
     setError('');
     try {
       const data = await getAdminDailySummary(today);
-      if (data?.success) {
+      if (data && data.success !== false) {
         setSummary(data);
         setLastUpdated(new Date());
       } else {
@@ -27,9 +31,12 @@ export default function AdminDashboard() {
       }
     } catch (err) {
       console.error('Admin summary error:', err);
-      setError('Failed to load dashboard data. Please refresh.');
+      setError('Failed to load dashboard data. Please click Refresh.');
     } finally {
       setLoading(false);
+      if (isManualRefresh) {
+        setTimeout(() => setIsRefreshing(false), 500);
+      }
     }
   }, [today]);
 
@@ -67,7 +74,7 @@ export default function AdminDashboard() {
       <div className="g-dashboard-container">
         <div className="g-loading-box">
           <div className="loading-spinner" />
-          <p>Loading dashboard...</p>
+          <p>Loading real-time admin metrics...</p>
         </div>
       </div>
     );
@@ -76,10 +83,11 @@ export default function AdminDashboard() {
   const totals = summary?.totals || {};
   const employees = summary?.summary || [];
   const workingEmployees = employees.filter(e => e.last_status === 'working');
+  const grandTotalForms = totals.grand_total_forms || employees.reduce((s, e) => s + (e.total_forms_today || 0), 0);
 
   return (
     <div className="g-dashboard-container">
-      {/* Google Style Header */}
+      {/* Header */}
       <div className="g-dashboard-header">
         <div className="g-header-text">
           <h1 className="g-page-title">Admin Dashboard</h1>
@@ -90,34 +98,42 @@ export default function AdminDashboard() {
             </span>
             {lastUpdated && (
               <span className="g-updated-time">
-                · {formatTime(lastUpdated)}
+                · Updated {formatTime(lastUpdated)}
               </span>
             )}
           </div>
         </div>
-        <button className="g-refresh-btn" onClick={loadSummary} id="refresh-dashboard-btn" aria-label="Refresh Dashboard">
-          <MdRefresh size={20} />
-          <span className="g-btn-text">Refresh</span>
+        <button
+          className={`btn btn-outline ${isRefreshing ? 'is-loading' : ''}`}
+          onClick={() => loadSummary(true)}
+          id="refresh-dashboard-btn"
+          aria-label="Refresh Dashboard"
+          disabled={isRefreshing}
+          style={{ gap: '8px', minWidth: '110px', justifyContent: 'center' }}
+        >
+          <MdRefresh size={18} className={isRefreshing ? 'spin-anim' : ''} />
+          <span>{isRefreshing ? 'Updating...' : 'Refresh'}</span>
         </button>
       </div>
 
       {error && (
         <div className="alert alert-error mb-lg" role="alert">
           <MdError size={18} /> {error}
+          <button className="btn btn-sm btn-ghost ml-auto" onClick={() => loadSummary(true)}>Retry</button>
         </div>
       )}
 
-      {/* Google Style Stat Cards Grid (2x2 on Mobile, 4x1 on Desktop) */}
+      {/* Stats Cards Grid */}
       <div className="g-stats-grid">
         <div className="g-stat-card g-blue">
           <div className="g-stat-header">
             <div className="g-stat-icon-badge blue">
               <MdPeople size={20} />
             </div>
-            <span className="g-stat-trend">Total</span>
+            <span className="g-stat-trend">DIRECTORY</span>
           </div>
           <div className="g-stat-value">{employees.length}</div>
-          <div className="g-stat-label">Employees</div>
+          <div className="g-stat-label">Total Employees</div>
         </div>
 
         <div className="g-stat-card g-green">
@@ -125,10 +141,10 @@ export default function AdminDashboard() {
             <div className="g-stat-icon-badge green">
               <MdWork size={20} />
             </div>
-            <span className="g-stat-trend active">Working</span>
+            <span className="g-stat-trend active">ACTIVE</span>
           </div>
-          <div className="g-stat-value">{totals.currently_working ?? 0}</div>
-          <div className="g-stat-label">Active Now</div>
+          <div className="g-stat-value">{totals.currently_working ?? workingEmployees.length}</div>
+          <div className="g-stat-label">Working Now</div>
         </div>
 
         <div className="g-stat-card g-orange">
@@ -136,10 +152,10 @@ export default function AdminDashboard() {
             <div className="g-stat-icon-badge orange">
               <MdCheckCircle size={20} />
             </div>
-            <span className="g-stat-trend">Completed</span>
+            <span className="g-stat-trend">SESSIONS</span>
           </div>
           <div className="g-stat-value">{totals.total_completed_sessions ?? 0}</div>
-          <div className="g-stat-label">Sessions</div>
+          <div className="g-stat-label">Completed Today</div>
         </div>
 
         <div className="g-stat-card g-purple">
@@ -147,26 +163,26 @@ export default function AdminDashboard() {
             <div className="g-stat-icon-badge purple">
               <MdAssignment size={20} />
             </div>
-            <span className="g-stat-trend">Production</span>
+            <span className="g-stat-trend">OUTPUT</span>
           </div>
-          <div className="g-stat-value">{(totals.grand_total_forms ?? 0).toLocaleString()}</div>
+          <div className="g-stat-value">{grandTotalForms.toLocaleString()}</div>
           <div className="g-stat-label">Forms Today</div>
         </div>
       </div>
 
       {/* Employee Status List Section */}
       <div className="g-section">
-        <div className="g-section-header">
+        <div className="g-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="g-section-title-wrap">
-            <h2 className="g-section-title">Today's Employee Status</h2>
-            <span className="g-section-count">{workingEmployees.length} Working Now</span>
+            <h2 className="g-section-title">Today's Employee Activity</h2>
+            <span className="g-section-count">{workingEmployees.length} Active Now</span>
           </div>
         </div>
 
         {employees.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">👥</div>
-            <div className="empty-state-text">No employee data available.</div>
+            <div className="empty-state-text">No employee data recorded for today yet.</div>
           </div>
         ) : (
           <div className="g-employee-list">
@@ -191,7 +207,7 @@ export default function AdminDashboard() {
                       {isWorking && emp.active_session && (
                         <div className="g-emp-active-detail">
                           <MdSchedule size={12} className="inline mr-1" />
-                          Session #{emp.active_session.session_number} · Form {emp.active_session.starting_form_number?.toLocaleString()}
+                          Session #{emp.active_session.session_number} · Started at Form {emp.active_session.starting_form_number?.toLocaleString()}
                         </div>
                       )}
                     </div>
@@ -199,7 +215,7 @@ export default function AdminDashboard() {
 
                   <div className="g-emp-right">
                     <div className="g-emp-forms">
-                      <span className="g-forms-num">{emp.total_forms_today?.toLocaleString() ?? 0}</span>
+                      <span className="g-forms-num">{(emp.total_forms_today ?? 0).toLocaleString()}</span>
                       <span className="g-forms-lbl">forms</span>
                     </div>
                     <div className="g-status-tag">
@@ -208,7 +224,9 @@ export default function AdminDashboard() {
                           <span className="g-chip-dot working" /> Working
                         </span>
                       ) : isCompleted ? (
-                        <span className="g-chip chip-completed">Done</span>
+                        <span className="g-chip chip-completed">
+                          Completed ({emp.sessions_today})
+                        </span>
                       ) : (
                         <span className="g-chip chip-idle">Idle</span>
                       )}
@@ -221,30 +239,48 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      {/* Production Leaderboard Card */}
-      {employees.some(e => e.total_forms_today > 0) && (
+      {/* Production Summary Card */}
+      {employees.some(e => (e.total_forms_today > 0 || e.sessions_today > 0)) && (
         <div className="g-section">
           <div className="g-section-header">
-            <h2 className="g-section-title">Daily Production Leaderboard</h2>
+            <h2 className="g-section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <MdLeaderboard size={20} color="var(--brand-primary)" /> Daily Form Output Breakdown
+            </h2>
           </div>
           <div className="g-leaderboard-card">
             {employees
-              .filter(e => e.total_forms_today > 0 || e.sessions_today > 0)
+              .filter(e => (e.total_forms_today > 0 || e.sessions_today > 0))
               .sort((a, b) => (b.total_forms_today ?? 0) - (a.total_forms_today ?? 0))
-              .map((emp, index) => (
-                <div key={emp.employee_id} className="g-leader-row">
-                  <div className="g-leader-rank">{index + 1}</div>
-                  <div className="g-leader-name">{emp.full_name}</div>
-                  <div className="g-leader-sessions">{emp.sessions_today} sess</div>
-                  <div className="g-leader-forms">{(emp.total_forms_today ?? 0).toLocaleString()} forms</div>
-                </div>
-              ))}
+              .map((emp, index) => {
+                const maxForms = Math.max(...employees.map(e => e.total_forms_today || 0), 1);
+                const percent = Math.min(Math.round(((emp.total_forms_today || 0) / maxForms) * 100), 100);
+
+                return (
+                  <div key={emp.employee_id} className="g-leader-row" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div className="g-leader-rank">{index + 1}</div>
+                        <div className="g-leader-name">{emp.full_name}</div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div className="g-leader-sessions">{emp.sessions_today} sess</div>
+                        <div className="g-leader-forms">{(emp.total_forms_today ?? 0).toLocaleString()} forms</div>
+                      </div>
+                    </div>
+                    {/* Visual Meter Bar */}
+                    <div style={{ width: '100%', background: 'rgba(255, 255, 255, 0.06)', borderRadius: '4px', height: '6px', overflow: 'hidden' }}>
+                      <div style={{ width: percent + '%', background: 'linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%)', height: '100%', borderRadius: '4px', transition: 'width 0.4s ease' }} />
+                    </div>
+
+                  </div>
+                );
+              })}
 
             <div className="g-leader-total-row">
               <div className="g-leader-rank">Σ</div>
               <div className="g-leader-name font-bold">TOTAL TODAY</div>
               <div className="g-leader-sessions">{employees.reduce((s, e) => s + (e.sessions_today ?? 0), 0)} sess</div>
-              <div className="g-leader-forms total">{(totals.grand_total_forms ?? 0).toLocaleString()} forms</div>
+              <div className="g-leader-forms total">{grandTotalForms.toLocaleString()} forms</div>
             </div>
           </div>
         </div>

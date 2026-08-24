@@ -55,7 +55,10 @@ export default function AdminEmployees() {
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
 
-  const loadEmployees = useCallback(async () => {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const loadEmployees = useCallback(async (isManual = false) => {
+    if (isManual) setIsRefreshing(true);
     setLoading(true);
     setError('');
     try {
@@ -66,8 +69,10 @@ export default function AdminEmployees() {
       setError('Failed to load employees list.');
     } finally {
       setLoading(false);
+      if (isManual) setTimeout(() => setIsRefreshing(false), 500);
     }
   }, []);
+
 
   useEffect(() => {
     loadEmployees();
@@ -348,12 +353,15 @@ export default function AdminEmployees() {
           </div>
 
           <button
-            className="btn btn-ghost btn-sm"
-            onClick={loadEmployees}
+            className={`btn btn-outline btn-sm ${isRefreshing ? 'is-loading' : ''}`}
+            onClick={() => loadEmployees(true)}
             title="Refresh list"
+            disabled={isRefreshing || loading}
           >
-            <MdRefresh size={18} />
+            <MdRefresh size={18} className={isRefreshing ? 'spin-anim' : ''} />
+            <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
           </button>
+
         </div>
       </div>
 

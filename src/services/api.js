@@ -68,12 +68,24 @@ export async function getMyProfile() {
  * Get all employee profiles (admin only)
  */
 export async function getAllProfiles() {
-  const { data, error } = await supabase
+  const clientToUse = adminSupabase || supabase;
+  const { data, error } = await clientToUse
     .from('profiles')
     .select('*')
     .eq('role', 'employee')
     .order('full_name');
-  if (error) throw error;
+  if (error) {
+    // If clientToUse was anon client and failed, try adminSupabase if available
+    if (adminSupabase && clientToUse !== adminSupabase) {
+      const retry = await adminSupabase
+        .from('profiles')
+        .select('*')
+        .eq('role', 'employee')
+        .order('full_name');
+      if (!retry.error) return retry.data;
+    }
+    throw error;
+  }
   return data;
 }
 
@@ -299,7 +311,8 @@ async function buildSummaryFromData(profiles, targetDate, clientOverride) {
  * Get all sessions with filters (admin)
  */
 export async function getAdminSessions({ date, employeeId, status, page = 0, pageSize = 50 } = {}) {
-  let query = supabase
+  const clientToUse = adminSupabase || supabase;
+  let query = clientToUse
     .from('work_sessions')
     .select(`
       *,
@@ -325,7 +338,8 @@ export async function getAdminSessions({ date, employeeId, status, page = 0, pag
  * Get all sessions for Excel export (admin)
  */
 export async function getAdminSessionsForExport({ date, employeeId, status } = {}) {
-  let query = supabase
+  const clientToUse = adminSupabase || supabase;
+  let query = clientToUse
     .from('work_sessions')
     .select(`
       *,

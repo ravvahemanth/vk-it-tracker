@@ -9,6 +9,7 @@ export default function AdminSessions() {
   const [sessions, setSessions] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
 
   // Filters
@@ -16,7 +17,8 @@ export default function AdminSessions() {
   const [filterEmployee, setFilterEmployee] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (isManual = false) => {
+    if (isManual) setIsRefreshing(true);
     setLoading(true);
     setError('');
     try {
@@ -36,6 +38,7 @@ export default function AdminSessions() {
       setError('Failed to load sessions. Please try again.');
     } finally {
       setLoading(false);
+      if (isManual) setTimeout(() => setIsRefreshing(false), 500);
     }
   }, [filterDate, filterEmployee, filterStatus]);
 
@@ -60,11 +63,18 @@ export default function AdminSessions() {
             Real-time track, filter, and audit employee form entry sessions
           </p>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={loadData} id="refresh-sessions-btn">
-          <MdRefresh size={18} />
-          Refresh Data
+        <button
+          className={`btn btn-outline ${isRefreshing ? 'is-loading' : ''}`}
+          onClick={() => loadData(true)}
+          id="refresh-sessions-btn"
+          disabled={isRefreshing || loading}
+          style={{ gap: '8px', minWidth: '110px', justifyContent: 'center' }}
+        >
+          <MdRefresh size={18} className={isRefreshing ? 'spin-anim' : ''} />
+          <span>{isRefreshing ? 'Updating...' : 'Refresh'}</span>
         </button>
       </div>
+
 
       {error && (
         <div className="alert alert-error mb-lg" role="alert">
