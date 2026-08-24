@@ -80,7 +80,11 @@ export default function AdminEmployees() {
 
   // Password validation checks
   const hasMinLength = password.length >= 6;
+  const hasUpper = /[A-Z]/.test(password);
+  const hasLower = /[a-z]/.test(password);
+  const hasNumber = /[0-9]/.test(password);
   const isPasswordValid = password.length >= 6;
+
 
   // Reset Add Form
   function resetAddForm() {

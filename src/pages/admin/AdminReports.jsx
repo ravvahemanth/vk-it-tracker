@@ -75,13 +75,26 @@ export default function AdminReports() {
     }
   }
 
-  const rawEmployees = summary?.summary || [];
-  const filteredEmployees = rawEmployees.filter(emp => {
+  // Combine summary with profiles list so all employees are ALWAYS listed on mobile & desktop
+  const employeeSource = summary?.summary && summary.summary.length > 0
+    ? summary.summary
+    : profiles.map(p => ({
+        employee_id: p.id,
+        full_name: p.full_name,
+        username: p.username,
+        is_active: p.is_active,
+        sessions_today: 0,
+        total_forms_today: 0,
+        last_status: 'not_working'
+      }));
+
+  const filteredEmployees = employeeSource.filter(emp => {
     if (exportEmployee && emp.employee_id !== exportEmployee) return false;
     if (exportStatus === 'working' && emp.last_status !== 'working') return false;
     if (exportStatus === 'completed' && emp.sessions_today === 0) return false;
     return true;
   });
+
 
   const totalFormsCount = filteredEmployees.reduce((sum, emp) => sum + (emp.total_forms_today || 0), 0);
   const totalSessionsCount = filteredEmployees.reduce((sum, emp) => sum + (emp.sessions_today || 0), 0);
