@@ -2,9 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { getAdminSessions, getAllProfiles } from '../../services/api';
 import { getTodayIST, formatDate, formatDateDDMMYYYY, formatTime } from '../../utils/dateTime';
 import { MdRefresh, MdError, MdFilterList, MdSchedule, MdAssignment, MdCheckCircle, MdPlayCircleFilled } from 'react-icons/md';
+import { useAuth } from '../../context/AuthContext';
 
 export default function AdminSessions() {
   const today = getTodayIST();
+  const { user, loading: authLoading } = useAuth();
 
   const [sessions, setSessions] = useState([]);
   const [profiles, setProfiles] = useState([]);
@@ -43,8 +45,9 @@ export default function AdminSessions() {
   }, [filterDate, filterEmployee, filterStatus]);
 
   useEffect(() => {
+    if (authLoading || !user) return;
     loadData();
-  }, [loadData]);
+  }, [loadData, authLoading, user]);
 
   // Computed Metrics
   const completedSessions = sessions.filter(s => s.status === 'completed');

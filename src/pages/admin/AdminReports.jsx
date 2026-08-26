@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { getAdminSessionsForExport, getAdminDailySummary, getAllProfiles } from '../../services/api';
 import { exportToExcel } from '../../utils/excelExport';
 import { getTodayIST, formatDate } from '../../utils/dateTime';
+import { useAuth } from '../../context/AuthContext';
 import {
   MdDownload, MdRefresh, MdError, MdCheckCircle,
   MdFilterList, MdAssessment, MdAssignment, MdPeople, MdWork
@@ -9,6 +10,7 @@ import {
 
 export default function AdminReports() {
   const today = getTodayIST();
+  const { user, loading: authLoading } = useAuth();
 
   const [exportDate, setExportDate] = useState(today);
   const [exportEmployee, setExportEmployee] = useState('');
@@ -43,9 +45,10 @@ export default function AdminReports() {
   }, [exportDate]);
 
   useEffect(() => {
+    if (authLoading || !user) return;
     getAllProfiles().then(data => setProfiles(data || [])).catch(() => {});
     handleLoadSummary();
-  }, [handleLoadSummary]);
+  }, [handleLoadSummary, authLoading, user]);
 
   async function handleExport() {
     setLoading(true);

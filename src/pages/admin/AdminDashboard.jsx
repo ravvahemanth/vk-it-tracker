@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getAdminDailySummary } from '../../services/api';
 import { supabase } from '../../services/supabase';
+import { useAuth } from '../../context/AuthContext';
 import { getTodayIST, formatTime, formatDate } from '../../utils/dateTime';
 import {
   MdPeople, MdWork, MdCheckCircle, MdAssignment,
@@ -9,6 +10,7 @@ import {
 
 export default function AdminDashboard() {
   const today = getTodayIST();
+  const { user, loading: authLoading } = useAuth();
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -41,6 +43,9 @@ export default function AdminDashboard() {
   }, [today]);
 
   useEffect(() => {
+    // Wait for auth to be confirmed before loading data
+    // This prevents empty data when session is being restored from localStorage
+    if (authLoading || !user) return;
     loadSummary();
 
     const channel = supabase

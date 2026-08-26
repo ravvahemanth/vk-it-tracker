@@ -10,6 +10,7 @@ import {
 import { formatDate } from '../../utils/dateTime';
 import SafeDeleteModal from '../../components/SafeDeleteModal';
 import { useToast } from '../../components/Toast';
+import { useAuth } from '../../context/AuthContext';
 import {
   MdPersonAdd, MdSearch, MdEdit, MdLockReset, MdCheckCircle,
   MdBlock, MdRefresh, MdError, MdVisibility, MdVisibilityOff,
@@ -18,6 +19,7 @@ import {
 
 export default function AdminEmployees() {
   const toast = useToast();
+  const { user, loading: authLoading } = useAuth();
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -75,8 +77,9 @@ export default function AdminEmployees() {
 
 
   useEffect(() => {
+    if (authLoading || !user) return;
     loadEmployees();
-  }, [loadEmployees]);
+  }, [loadEmployees, authLoading, user]);
 
   // Password validation checks
   const hasMinLength = password.length >= 6;

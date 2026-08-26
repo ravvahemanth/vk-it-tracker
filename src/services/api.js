@@ -1,5 +1,31 @@
 import { supabase, adminSupabase } from './supabase';
 
+/**
+ * Returns the best available Supabase client for admin reads.
+ * Prefers the service-role client (bypasses RLS completely).
+ * Falls back to the regular anon client (relies on RLS + admin session).
+ * NOTE: The regular client requires an active authenticated session.
+ */
+function getAdminClient() {
+  return adminSupabase || supabase;
+}
+
+/**
+ * Ensures a valid session exists before making a query.
+ * If no session exists, waits for one (up to 3 seconds).
+ */
+async function ensureSession() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session) return session;
+  // Wait briefly for session to restore from storage
+  return new Promise((resolve) => {
+    const unsub = supabase.auth.onAuthStateChange((_event, s) => {
+      if (s) { unsub.data.subscription.unsubscribe(); resolve(s); }
+    });
+    setTimeout(() => { unsub.data.subscription.unsubscribe(); resolve(null); }, 3000);
+  });
+}
+
 // ============================================================
 // AUTH SERVICES
 // ============================================================
@@ -65,30 +91,38 @@ export async function getMyProfile() {
 }
 
 /**
- * Get all employee profiles (admin only)
- * Uses adminSupabase (service role) if available to bypass RLS, otherwise falls back to anon client
+ * Get all employee profiles (admin only).
+ * Uses service-role client if available (bypasses RLS).
+ * Otherwise uses the authenticated supabase client (admin RLS allows reading all profiles).
  */
 export async function getAllProfiles() {
-  // Prefer service-role client (bypasses RLS), fall back to anon client
-  const clientToUse = adminSupabase || supabase;
+  // If service role client is available, use it (bypasses RLS entirely)
+  if (adminSupabase) {
+    const { data, error } = await adminSupabase
+      .from('profiles')
+      .select('*')
+      .eq('role', 'employee')
+      .order('full_name');
+    if (!error) return data || [];
+    console.error('getAllProfiles (service role) error:', error);
+    // Fall through to anon client
+  }
 
-  const { data, error } = await clientToUse
+  // Ensure session exists before querying (important for production)
+  const session = await ensureSession();
+  if (!session) {
+    console.warn('getAllProfiles: no active session, cannot query profiles');
+    return [];
+  }
+
+  const { data, error } = await supabase
     .from('profiles')
     .select('*')
     .eq('role', 'employee')
     .order('full_name');
 
   if (error) {
-    console.error('getAllProfiles error:', error);
-    // If anon client failed, try adminSupabase if it wasn't already used
-    if (adminSupabase && clientToUse !== adminSupabase) {
-      const retry = await adminSupabase
-        .from('profiles')
-        .select('*')
-        .eq('role', 'employee')
-        .order('full_name');
-      if (!retry.error) return retry.data || [];
-    }
+    console.error('getAllProfiles (anon) error:', error.code, error.message);
     throw error;
   }
   return data || [];
@@ -218,10 +252,25 @@ export async function getAdminDailySummary(date) {
 /**
  * Build admin daily summary by querying tables directly.
  * This is the fallback when the RPC is unavailable or broken.
+ * Uses service-role client if available (bypasses RLS).
+ * Otherwise ensures an active session exists before querying with the anon client.
  */
 async function buildSummaryFromTables(targetDate) {
-  // Use service-role client if available (bypasses RLS), otherwise anon client
-  const client = adminSupabase || supabase;
+  let client;
+
+  if (adminSupabase) {
+    // Service role bypasses RLS entirely — best option
+    client = adminSupabase;
+  } else {
+    // No service role key → must use authenticated anon client
+    // Ensure session is active before making RLS-protected queries
+    const session = await ensureSession();
+    if (!session) {
+      console.warn('buildSummaryFromTables: no session available, returning empty');
+      return makeSafeEmptyResult(targetDate);
+    }
+    client = supabase;
+  }
 
   try {
     // Fetch all active employees
@@ -233,8 +282,7 @@ async function buildSummaryFromTables(targetDate) {
       .order('full_name');
 
     if (profErr) {
-      console.error('buildSummaryFromTables profiles error:', profErr);
-      // Return safe empty result instead of crashing
+      console.error('buildSummaryFromTables profiles error:', profErr.code, profErr.message);
       return makeSafeEmptyResult(targetDate);
     }
 
@@ -344,10 +392,19 @@ function makeSafeEmptyResult(targetDate) {
 }
 
 /**
- * Get all sessions with filters (admin)
+ * Get all sessions with filters (admin).
+ * Uses service-role client if available, otherwise ensures session exists.
  */
 export async function getAdminSessions({ date, employeeId, status, page = 0, pageSize = 50 } = {}) {
-  const clientToUse = adminSupabase || supabase;
+  let clientToUse;
+  if (adminSupabase) {
+    clientToUse = adminSupabase;
+  } else {
+    const session = await ensureSession();
+    if (!session) return [];
+    clientToUse = supabase;
+  }
+
   let query = clientToUse
     .from('work_sessions')
     .select(`
@@ -371,10 +428,19 @@ export async function getAdminSessions({ date, employeeId, status, page = 0, pag
 }
 
 /**
- * Get all sessions for Excel export (admin)
+ * Get all sessions for Excel export (admin).
+ * Uses service-role client if available, otherwise ensures session exists.
  */
 export async function getAdminSessionsForExport({ date, employeeId, status } = {}) {
-  const clientToUse = adminSupabase || supabase;
+  let clientToUse;
+  if (adminSupabase) {
+    clientToUse = adminSupabase;
+  } else {
+    const session = await ensureSession();
+    if (!session) return [];
+    clientToUse = supabase;
+  }
+
   let query = clientToUse
     .from('work_sessions')
     .select(`
