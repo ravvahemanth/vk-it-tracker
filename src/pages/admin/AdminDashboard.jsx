@@ -177,12 +177,27 @@ export default function AdminDashboard() {
 
       {/* Employee Status List Section */}
       <div className="g-section">
-        <div className="g-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div className="g-section-title-wrap">
-            <h2 className="g-section-title">Today's Employee Activity</h2>
-            <span className="g-section-count">{workingEmployees.length} Active Now</span>
-          </div>
+        <div className="g-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '16px' }}>
+          <h2 className="g-section-title" style={{ margin: 0, fontSize: '1.2rem', fontWeight: '800', color: 'var(--text-primary)' }}>
+            Today's Employee Activity
+          </h2>
+          <span style={{
+            padding: '5px 12px',
+            borderRadius: '20px',
+            fontSize: '0.78rem',
+            fontWeight: '700',
+            background: 'rgba(34, 197, 94, 0.12)',
+            color: '#22c55e',
+            border: '1px solid rgba(34, 197, 94, 0.3)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />
+            {workingEmployees.length} Active Now
+          </span>
         </div>
+
 
         {employees.length === 0 ? (
           <div className="empty-state">
