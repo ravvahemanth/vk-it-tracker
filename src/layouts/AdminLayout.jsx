@@ -66,24 +66,57 @@ export default function AdminLayout() {
           ))}
         </nav>
 
-        <div className="sidebar-footer">
-          <div style={{ marginBottom: '14px' }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-              Appearance Theme
+        <div className="sidebar-footer" style={{ padding: '16px' }}>
+          <div className="sidebar-user-card" style={{
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '12px',
+            padding: '12px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div className="employee-avatar" style={{ width: '34px', height: '34px', fontSize: '0.85rem', flexShrink: 0 }}>
+                {initials}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: '700', fontSize: '0.88rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {profile?.full_name || 'Administrator'}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  Administrator
+                </div>
+              </div>
             </div>
-            <ThemeToggle variant="segmented" />
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '8px', borderTop: '1px solid var(--border-color)' }}>
+              <div style={{ flex: 1 }}>
+                <ThemeToggle variant="segmented" />
+              </div>
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={handleLogout}
+                id="admin-logout-btn"
+                title="Logout Account"
+                style={{
+                  height: '34px',
+                  width: '34px',
+                  padding: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '8px',
+                  flexShrink: 0,
+                  color: 'var(--color-error)',
+                  borderColor: 'rgba(239, 68, 68, 0.25)',
+                  background: 'rgba(239, 68, 68, 0.05)'
+                }}
+              >
+                <MdLogout size={17} />
+              </button>
+            </div>
           </div>
-          <div style={{ marginBottom: '12px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            Logged in as <strong style={{ color: 'var(--text-primary)' }}>{profile?.full_name || 'Administrator'}</strong>
-          </div>
-          <button
-            className="btn btn-outline btn-sm btn-full"
-            onClick={handleLogout}
-            id="admin-logout-btn"
-          >
-            <MdLogout size={16} />
-            Logout
-          </button>
         </div>
       </aside>
 
@@ -110,7 +143,7 @@ export default function AdminLayout() {
             </div>
           </div>
 
-          <div className="mobile-header-right">
+          <div className="mobile-header-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <ThemeToggle />
             <button
               type="button"
@@ -118,6 +151,7 @@ export default function AdminLayout() {
               onClick={handleLogout}
               title="Logout"
               aria-label="Logout"
+              style={{ color: 'var(--color-error)' }}
             >
               <MdLogout size={20} />
             </button>
@@ -184,22 +218,32 @@ export default function AdminLayout() {
           </nav>
 
           {/* Drawer Footer */}
-          <div className="drawer-footer">
-            <div style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-              Appearance Theme
+          <div className="drawer-footer" style={{ padding: '16px', borderTop: '1px solid var(--border-color)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ flex: 1 }}>
+                <ThemeToggle variant="segmented" />
+              </div>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={handleLogout}
+                style={{
+                  height: '38px',
+                  padding: '0 14px',
+                  gap: '6px',
+                  color: 'var(--color-error)',
+                  borderColor: 'rgba(239, 68, 68, 0.3)',
+                  background: 'rgba(239, 68, 68, 0.05)',
+                  flexShrink: 0
+                }}
+              >
+                <MdLogout size={17} />
+                <span>Logout</span>
+              </button>
             </div>
-            <ThemeToggle variant="segmented" />
-
-            <button
-              type="button"
-              className="btn btn-outline btn-danger btn-full mt-3"
-              onClick={handleLogout}
-            >
-              <MdLogout size={18} />
-              Logout Account
-            </button>
           </div>
         </aside>
+
 
         {/* Page Content */}
         <main className="admin-main-body">
