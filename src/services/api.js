@@ -12,17 +12,36 @@ function getAdminClient() {
 
 /**
  * Ensures a valid session exists before making a query.
- * If no session exists, waits for one (up to 3 seconds).
+ * If no session exists, waits briefly for one.
  */
 async function ensureSession() {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (session) return session;
-  // Wait briefly for session to restore from storage
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) return session;
+  } catch (e) {
+    console.warn('ensureSession getSession error:', e);
+  }
+
   return new Promise((resolve) => {
-    const unsub = supabase.auth.onAuthStateChange((_event, s) => {
-      if (s) { unsub.data.subscription.unsubscribe(); resolve(s); }
-    });
-    setTimeout(() => { unsub.data.subscription.unsubscribe(); resolve(null); }, 3000);
+    let sub = null;
+    try {
+      const res = supabase.auth.onAuthStateChange((_event, s) => {
+        if (s) {
+          if (sub) sub.unsubscribe();
+          resolve(s);
+        }
+      });
+      sub = res?.data?.subscription;
+    } catch (err) {
+      console.warn('ensureSession listener error:', err);
+      resolve(null);
+      return;
+    }
+
+    setTimeout(() => {
+      if (sub) sub.unsubscribe();
+      resolve(null);
+    }, 2000);
   });
 }
 

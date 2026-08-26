@@ -18,7 +18,7 @@ export default function AdminSessions() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
 
-  const [filterDate, setFilterDate] = useState(today);
+  const [filterDate, setFilterDate] = useState('');
   const [filterEmployee, setFilterEmployee] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
 
