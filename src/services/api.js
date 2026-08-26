@@ -66,27 +66,32 @@ export async function getMyProfile() {
 
 /**
  * Get all employee profiles (admin only)
+ * Uses adminSupabase (service role) if available to bypass RLS, otherwise falls back to anon client
  */
 export async function getAllProfiles() {
+  // Prefer service-role client (bypasses RLS), fall back to anon client
   const clientToUse = adminSupabase || supabase;
+
   const { data, error } = await clientToUse
     .from('profiles')
     .select('*')
     .eq('role', 'employee')
     .order('full_name');
+
   if (error) {
-    // If clientToUse was anon client and failed, try adminSupabase if available
+    console.error('getAllProfiles error:', error);
+    // If anon client failed, try adminSupabase if it wasn't already used
     if (adminSupabase && clientToUse !== adminSupabase) {
       const retry = await adminSupabase
         .from('profiles')
         .select('*')
         .eq('role', 'employee')
         .order('full_name');
-      if (!retry.error) return retry.data;
+      if (!retry.error) return retry.data || [];
     }
     throw error;
   }
-  return data;
+  return data || [];
 }
 
 // ============================================================
@@ -179,12 +184,19 @@ export async function getMySessionsByDate(date) {
 // ============================================================
 
 /**
- * Get admin daily summary via RPC with reliable JS fallback using adminSupabase
+ * Get admin daily summary.
+ * 
+ * Priority:
+ *  1. Try the get_admin_daily_summary RPC (most efficient)
+ *  2. Fall back to pure-JS aggregation via direct table queries (works even if RPC is broken)
+ *
+ * The JS fallback uses adminSupabase (service role key) when available to bypass RLS,
+ * or falls back to the anon client when running as admin.
  */
 export async function getAdminDailySummary(date) {
   const targetDate = date || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
-  // 1. Try RPC call
+  // 1. Try RPC call first
   try {
     const { data, error } = await supabase.rpc('get_admin_daily_summary', {
       p_date: targetDate,
@@ -192,15 +204,28 @@ export async function getAdminDailySummary(date) {
     if (!error && data && data.success !== false) {
       return data;
     }
+    if (error) {
+      console.warn('get_admin_daily_summary RPC error (falling back to JS):', error.message);
+    }
   } catch (rpcErr) {
-    console.warn('RPC get_admin_daily_summary failed, using JS fallback:', rpcErr);
+    console.warn('get_admin_daily_summary RPC threw (falling back to JS):', rpcErr.message);
   }
 
-  // 2. JS Fallback Query (uses adminSupabase if available to bypass RLS recursion, else supabase)
-  const clientToUse = adminSupabase || supabase;
+  // 2. Pure-JS Fallback: Query tables directly
+  return await buildSummaryFromTables(targetDate);
+}
+
+/**
+ * Build admin daily summary by querying tables directly.
+ * This is the fallback when the RPC is unavailable or broken.
+ */
+async function buildSummaryFromTables(targetDate) {
+  // Use service-role client if available (bypasses RLS), otherwise anon client
+  const client = adminSupabase || supabase;
 
   try {
-    const { data: profiles, error: profErr } = await clientToUse
+    // Fetch all active employees
+    const { data: profiles, error: profErr } = await client
       .from('profiles')
       .select('id, full_name, username, is_active, role')
       .eq('role', 'employee')
@@ -208,104 +233,115 @@ export async function getAdminDailySummary(date) {
       .order('full_name');
 
     if (profErr) {
-      // If anon client failed due to RLS, try adminSupabase explicitly
-      if (adminSupabase && clientToUse !== adminSupabase) {
-        const retry = await adminSupabase
-          .from('profiles')
-          .select('id, full_name, username, is_active, role')
-          .eq('role', 'employee')
-          .eq('is_active', true)
-          .order('full_name');
-        if (retry.error) throw retry.error;
-        return buildSummaryFromData(retry.data, targetDate);
-      }
-      throw profErr;
+      console.error('buildSummaryFromTables profiles error:', profErr);
+      // Return safe empty result instead of crashing
+      return makeSafeEmptyResult(targetDate);
     }
 
-    return await buildSummaryFromData(profiles, targetDate, clientToUse);
-  } catch (fallbackErr) {
-    console.error('Fallback getAdminDailySummary error:', fallbackErr);
-    // Ultimate safety fallback: return empty structure instead of throwing
+    // Fetch all sessions for this date
+    const { data: sessions, error: sessErr } = await client
+      .from('work_sessions')
+      .select('id, employee_id, session_number, starting_form_number, status, total_forms, start_time, work_date')
+      .eq('work_date', targetDate);
+
+    if (sessErr) {
+      console.error('buildSummaryFromTables sessions error:', sessErr);
+      // Return employees with zero metrics rather than failing
+      return buildResultWithNoSessions(profiles || [], targetDate);
+    }
+
+    // Group sessions by employee
+    const sessionsByEmp = {};
+    (sessions || []).forEach(s => {
+      if (!sessionsByEmp[s.employee_id]) sessionsByEmp[s.employee_id] = [];
+      sessionsByEmp[s.employee_id].push(s);
+    });
+
+    const summary = (profiles || []).map(p => {
+      const empSessions = sessionsByEmp[p.id] || [];
+      const completed = empSessions.filter(s => s.status === 'completed');
+      const active = empSessions.find(s => s.status === 'working') || null;
+      const totalForms = completed.reduce((sum, s) => sum + Number(s.total_forms || 0), 0);
+
+      let lastStatus = 'not_working';
+      if (active) lastStatus = 'working';
+      else if (completed.length > 0) lastStatus = 'completed';
+
+      return {
+        employee_id: p.id,
+        full_name: p.full_name,
+        username: p.username,
+        is_active: p.is_active,
+        sessions_today: completed.length,
+        total_forms_today: totalForms,
+        active_session: active ? {
+          id: active.id,
+          session_number: active.session_number,
+          starting_form_number: active.starting_form_number,
+          start_time: active.start_time,
+        } : null,
+        last_status: lastStatus,
+      };
+    });
+
+    const allSessions = sessions || [];
+    const completedAll = allSessions.filter(s => s.status === 'completed');
+    const workingAll = allSessions.filter(s => s.status === 'working');
+    const activeEmpIds = new Set(allSessions.map(s => s.employee_id));
+
     return {
       success: true,
       date: targetDate,
-      summary: [],
+      summary,
       totals: {
-        total_employees_active: 0,
-        currently_working: 0,
-        total_completed_sessions: 0,
-        grand_total_forms: 0
-      }
+        total_employees_active: activeEmpIds.size,
+        currently_working: workingAll.length,
+        total_completed_sessions: completedAll.length,
+        grand_total_forms: completedAll.reduce((sum, s) => sum + Number(s.total_forms || 0), 0),
+      },
     };
+  } catch (err) {
+    console.error('buildSummaryFromTables fatal error:', err);
+    return makeSafeEmptyResult(targetDate);
   }
 }
 
-// Helper to construct summary object cleanly
-async function buildSummaryFromData(profiles, targetDate, clientOverride) {
-  const clientToUse = clientOverride || adminSupabase || supabase;
-  
-  const { data: sessions } = await clientToUse
-    .from('work_sessions')
-    .select('*')
-    .eq('work_date', targetDate);
-
-  const sessionsByEmp = {};
-  (sessions || []).forEach(s => {
-    if (!sessionsByEmp[s.employee_id]) {
-      sessionsByEmp[s.employee_id] = [];
-    }
-    sessionsByEmp[s.employee_id].push(s);
-  });
-
-  const summary = (profiles || []).map(p => {
-    const empSessions = sessionsByEmp[p.id] || [];
-    const completedSessions = empSessions.filter(s => s.status === 'completed');
-    const activeSession = empSessions.find(s => s.status === 'working') || null;
-    const totalFormsSum = completedSessions.reduce((sum, s) => sum + Number(s.total_forms || 0), 0);
-
-    let lastStatus = 'not_working';
-    if (activeSession) {
-      lastStatus = 'working';
-    } else if (completedSessions.length > 0) {
-      lastStatus = 'completed';
-    }
-
-    return {
+function buildResultWithNoSessions(profiles, targetDate) {
+  return {
+    success: true,
+    date: targetDate,
+    summary: profiles.map(p => ({
       employee_id: p.id,
       full_name: p.full_name,
       username: p.username,
       is_active: p.is_active,
-      sessions_today: completedSessions.length,
-      total_forms_today: totalFormsSum,
-      active_session: activeSession ? {
-        id: activeSession.id,
-        session_number: activeSession.session_number,
-        starting_form_number: activeSession.starting_form_number,
-        start_time: activeSession.start_time
-      } : null,
-      last_status: lastStatus
-    };
-  });
-
-  const completedAll = (sessions || []).filter(s => s.status === 'completed');
-  const workingAll = (sessions || []).filter(s => s.status === 'working');
-  const activeEmps = new Set((sessions || []).map(s => s.employee_id));
-
-  const totals = {
-    total_employees_active: activeEmps.size,
-    currently_working: workingAll.length,
-    total_completed_sessions: completedAll.length,
-    grand_total_forms: completedAll.reduce((sum, s) => sum + Number(s.total_forms || 0), 0)
-  };
-
-  return {
-    success: true,
-    date: targetDate,
-    summary,
-    totals
+      sessions_today: 0,
+      total_forms_today: 0,
+      active_session: null,
+      last_status: 'not_working',
+    })),
+    totals: {
+      total_employees_active: 0,
+      currently_working: 0,
+      total_completed_sessions: 0,
+      grand_total_forms: 0,
+    },
   };
 }
 
+function makeSafeEmptyResult(targetDate) {
+  return {
+    success: true,
+    date: targetDate,
+    summary: [],
+    totals: {
+      total_employees_active: 0,
+      currently_working: 0,
+      total_completed_sessions: 0,
+      grand_total_forms: 0,
+    },
+  };
+}
 
 /**
  * Get all sessions with filters (admin)
@@ -372,7 +408,10 @@ export async function getAdminSessionsForExport({ date, employeeId, status } = {
 export async function adminCreateEmployee({ fullName, username, password, isActive = true }) {
   try {
     if (!adminSupabase) {
-      return { success: false, error: 'Admin client not configured. Add VITE_SUPABASE_SERVICE_ROLE_KEY to .env' };
+      return {
+        success: false,
+        error: 'Admin operations require VITE_SUPABASE_SERVICE_ROLE_KEY. Please add it to Vercel environment variables and redeploy.',
+      };
     }
 
     const cleanUsername = username.trim().toLowerCase().replace(/\s+/g, '');
@@ -384,7 +423,7 @@ export async function adminCreateEmployee({ fullName, username, password, isActi
     if (password.length < 6) return { success: false, error: 'Password must be at least 6 characters long.' };
 
     // Check if username already exists
-    const { data: existingProfile } = await supabase
+    const { data: existingProfile } = await (adminSupabase || supabase)
       .from('profiles')
       .select('id')
       .eq('username', cleanUsername)
@@ -393,7 +432,7 @@ export async function adminCreateEmployee({ fullName, username, password, isActi
       return { success: false, error: `Username "${cleanUsername}" is already taken.` };
     }
 
-    // Create auth user via GoTrue Admin API (this properly sets up auth.identities)
+    // Create auth user via GoTrue Admin API
     const { data: createdUser, error: authErr } = await adminSupabase.auth.admin.createUser({
       email,
       password,
@@ -412,7 +451,7 @@ export async function adminCreateEmployee({ fullName, username, password, isActi
 
     const newUserId = createdUser.user.id;
 
-    // Upsert profile (trigger may auto-create, so use upsert to be safe)
+    // Upsert profile
     const { data: profileData, error: profErr } = await adminSupabase
       .from('profiles')
       .upsert({
@@ -428,8 +467,7 @@ export async function adminCreateEmployee({ fullName, username, password, isActi
       .single();
 
     if (profErr) {
-      console.warn('Profile upsert notice (trigger may have already created it):', profErr.message);
-      // Fetch existing profile created by trigger
+      console.warn('Profile upsert notice:', profErr.message);
       const { data: existProf } = await adminSupabase.from('profiles').select('*').eq('id', newUserId).single();
       return { success: true, message: `Employee "${fullName.trim()}" created successfully.`, profile: existProf };
     }
@@ -469,20 +507,21 @@ export async function adminUpdateEmployee({ employeeId, fullName, username, isAc
 
 /**
  * Reset employee password (admin only)
- * Uses GoTrue Admin API to update password — works with the new Supabase auth schema
  */
 export async function adminResetEmployeePassword({ employeeId, newPassword }) {
   try {
     if (!adminSupabase) {
-      return { success: false, error: 'Admin client not configured. Add VITE_SUPABASE_SERVICE_ROLE_KEY to .env' };
+      return {
+        success: false,
+        error: 'Admin operations require VITE_SUPABASE_SERVICE_ROLE_KEY. Please add it to Vercel environment variables and redeploy.',
+      };
     }
 
     if (!newPassword || newPassword.length < 6) {
       return { success: false, error: 'Password must be at least 6 characters long.' };
     }
 
-    // Use GoTrue Admin API to update password
-    const { data: updatedUser, error: authErr } = await adminSupabase.auth.admin.updateUserById(
+    const { error: authErr } = await adminSupabase.auth.admin.updateUserById(
       employeeId,
       { password: newPassword }
     );
@@ -492,10 +531,7 @@ export async function adminResetEmployeePassword({ employeeId, newPassword }) {
       return { success: false, error: authErr.message || 'Failed to reset password.' };
     }
 
-    return {
-      success: true,
-      message: 'Password reset successfully.',
-    };
+    return { success: true, message: 'Password reset successfully.' };
   } catch (err) {
     console.error('adminResetEmployeePassword error:', err);
     return { success: false, error: err.message || 'Failed to reset employee password' };
@@ -524,12 +560,14 @@ export async function adminToggleEmployeeStatus({ employeeId, isActive }) {
 
 /**
  * Permanently delete employee account and all their data (admin only)
- * Uses GoTrue Admin API to delete auth user + direct table deletions for data cleanup
  */
 export async function adminDeleteEmployee(employeeId) {
   try {
     if (!adminSupabase) {
-      return { success: false, error: 'Admin client not configured. Add VITE_SUPABASE_SERVICE_ROLE_KEY to .env' };
+      return {
+        success: false,
+        error: 'Admin operations require VITE_SUPABASE_SERVICE_ROLE_KEY. Please add it to Vercel environment variables and redeploy.',
+      };
     }
 
     // 1. Delete work sessions first (foreign key)
@@ -550,18 +588,14 @@ export async function adminDeleteEmployee(employeeId) {
       console.warn('Profile delete error:', profErr.message);
     }
 
-    // 3. Delete auth user via GoTrue Admin API (this properly removes auth.users + auth.identities)
+    // 3. Delete auth user
     const { error: authErr } = await adminSupabase.auth.admin.deleteUser(employeeId);
     if (authErr) {
       console.error('GoTrue admin.deleteUser error:', authErr);
-      // Profile/sessions were already deleted — only auth delete failed
       return { success: false, error: `Profile deleted but auth removal failed: ${authErr.message}` };
     }
 
-    return {
-      success: true,
-      message: 'Employee account and all data deleted successfully.',
-    };
+    return { success: true, message: 'Employee account and all data deleted successfully.' };
   } catch (err) {
     console.error('adminDeleteEmployee error:', err);
     return { success: false, error: err.message || 'Failed to delete employee account' };
