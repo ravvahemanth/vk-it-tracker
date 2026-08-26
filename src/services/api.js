@@ -115,36 +115,31 @@ export async function getMyProfile() {
  * Otherwise uses the authenticated supabase client (admin RLS allows reading all profiles).
  */
 export async function getAllProfiles() {
-  // If service role client is available, use it (bypasses RLS entirely)
+  // Try anon client first if user has active session, or fallback to service client
+  const session = await ensureSession();
+  
+  if (session) {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('role', 'employee')
+      .order('full_name');
+    if (!error && data) return data;
+    console.warn('getAllProfiles (anon client) notice:', error?.message);
+  }
+
+  // Fallback to service-role client if available
   if (adminSupabase) {
     const { data, error } = await adminSupabase
       .from('profiles')
       .select('*')
       .eq('role', 'employee')
       .order('full_name');
-    if (!error) return data || [];
-    console.error('getAllProfiles (service role) error:', error);
-    // Fall through to anon client
+    if (!error && data) return data;
+    console.error('getAllProfiles (service role) error:', error?.message);
   }
 
-  // Ensure session exists before querying (important for production)
-  const session = await ensureSession();
-  if (!session) {
-    console.warn('getAllProfiles: no active session, cannot query profiles');
-    return [];
-  }
-
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('role', 'employee')
-    .order('full_name');
-
-  if (error) {
-    console.error('getAllProfiles (anon) error:', error.code, error.message);
-    throw error;
-  }
-  return data || [];
+  return [];
 }
 
 // ============================================================
@@ -414,36 +409,58 @@ function makeSafeEmptyResult(targetDate) {
  * Get all sessions with filters (admin).
  * Uses service-role client if available, otherwise ensures session exists.
  */
-export async function getAdminSessions({ date, employeeId, status, page = 0, pageSize = 50 } = {}) {
-  let clientToUse;
-  if (adminSupabase) {
-    clientToUse = adminSupabase;
-  } else {
-    const session = await ensureSession();
-    if (!session) return [];
-    clientToUse = supabase;
+export async function getAdminSessions({ date, employeeId, status, page = 0, pageSize = 200 } = {}) {
+  const session = await ensureSession();
+
+  // Try anon client first (with user JWT)
+  if (session) {
+    let query = supabase
+      .from('work_sessions')
+      .select(`
+        *,
+        profiles:employee_id (
+          full_name,
+          username
+        )
+      `)
+      .order('work_date', { ascending: false })
+      .order('start_time', { ascending: false })
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+
+    if (date) query = query.eq('work_date', date);
+    if (employeeId) query = query.eq('employee_id', employeeId);
+    if (status) query = query.eq('status', status);
+
+    const { data, error } = await query;
+    if (!error && data) return data;
+    console.warn('getAdminSessions (anon client) notice:', error?.message);
   }
 
-  let query = clientToUse
-    .from('work_sessions')
-    .select(`
-      *,
-      profiles:employee_id (
-        full_name,
-        username
-      )
-    `)
-    .order('work_date', { ascending: false })
-    .order('start_time', { ascending: false })
-    .range(page * pageSize, (page + 1) * pageSize - 1);
+  // Fallback to service role client if available
+  if (adminSupabase) {
+    let query = adminSupabase
+      .from('work_sessions')
+      .select(`
+        *,
+        profiles:employee_id (
+          full_name,
+          username
+        )
+      `)
+      .order('work_date', { ascending: false })
+      .order('start_time', { ascending: false })
+      .range(page * pageSize, (page + 1) * pageSize - 1);
 
-  if (date) query = query.eq('work_date', date);
-  if (employeeId) query = query.eq('employee_id', employeeId);
-  if (status) query = query.eq('status', status);
+    if (date) query = query.eq('work_date', date);
+    if (employeeId) query = query.eq('employee_id', employeeId);
+    if (status) query = query.eq('status', status);
 
-  const { data, error } = await query;
-  if (error) throw error;
-  return data;
+    const { data, error } = await query;
+    if (!error && data) return data;
+    console.error('getAdminSessions (service role) error:', error?.message);
+  }
+
+  return [];
 }
 
 /**
@@ -451,35 +468,53 @@ export async function getAdminSessions({ date, employeeId, status, page = 0, pag
  * Uses service-role client if available, otherwise ensures session exists.
  */
 export async function getAdminSessionsForExport({ date, employeeId, status } = {}) {
-  let clientToUse;
-  if (adminSupabase) {
-    clientToUse = adminSupabase;
-  } else {
-    const session = await ensureSession();
-    if (!session) return [];
-    clientToUse = supabase;
+  const session = await ensureSession();
+
+  if (session) {
+    let query = supabase
+      .from('work_sessions')
+      .select(`
+        *,
+        profiles:employee_id (
+          full_name,
+          username
+        )
+      `)
+      .order('work_date', { ascending: false })
+      .order('employee_id')
+      .order('session_number');
+
+    if (date) query = query.eq('work_date', date);
+    if (employeeId) query = query.eq('employee_id', employeeId);
+    if (status) query = query.eq('status', status);
+
+    const { data, error } = await query;
+    if (!error && data) return data;
   }
 
-  let query = clientToUse
-    .from('work_sessions')
-    .select(`
-      *,
-      profiles:employee_id (
-        full_name,
-        username
-      )
-    `)
-    .order('work_date', { ascending: false })
-    .order('employee_id')
-    .order('session_number');
+  if (adminSupabase) {
+    let query = adminSupabase
+      .from('work_sessions')
+      .select(`
+        *,
+        profiles:employee_id (
+          full_name,
+          username
+        )
+      `)
+      .order('work_date', { ascending: false })
+      .order('employee_id')
+      .order('session_number');
 
-  if (date) query = query.eq('work_date', date);
-  if (employeeId) query = query.eq('employee_id', employeeId);
-  if (status) query = query.eq('status', status);
+    if (date) query = query.eq('work_date', date);
+    if (employeeId) query = query.eq('employee_id', employeeId);
+    if (status) query = query.eq('status', status);
 
-  const { data, error } = await query;
-  if (error) throw error;
-  return data;
+    const { data, error } = await query;
+    if (!error && data) return data;
+  }
+
+  return [];
 }
 
 // ============================================================

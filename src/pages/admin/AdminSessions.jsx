@@ -27,7 +27,7 @@ export default function AdminSessions() {
     setLoading(true);
     setError('');
     try {
-      const [sessionsData, profilesData] = await Promise.all([
+      const [sessionsRes, profilesRes] = await Promise.allSettled([
         getAdminSessions({
           date: filterDate || undefined,
           employeeId: filterEmployee || undefined,
@@ -36,8 +36,16 @@ export default function AdminSessions() {
         }),
         getAllProfiles(),
       ]);
-      setSessions(sessionsData || []);
-      setProfiles(profilesData || []);
+
+      const fetchedSessions = sessionsRes.status === 'fulfilled' ? sessionsRes.value : [];
+      const fetchedProfiles = profilesRes.status === 'fulfilled' ? profilesRes.value : [];
+
+      setSessions(fetchedSessions || []);
+      setProfiles(fetchedProfiles || []);
+
+      if (sessionsRes.status === 'rejected' && profilesRes.status === 'rejected') {
+        setError('Unable to reach database. Please click Refresh.');
+      }
     } catch (err) {
       console.error('Sessions load error:', err);
       setError('Failed to load sessions. Please try again.');
