@@ -2953,6 +2953,21 @@ tr:hover td {
 }
 
 /* Mobile Responsive Optimization (< 768px) */
+.g-stats-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.g-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+
 .mobile-sessions-list {
   display: flex;
   flex-direction: column;
@@ -2964,14 +2979,6 @@ tr:hover td {
 }
 
 @media (max-width: 768px) {
-  .mobile-sessions-list {
-    display: flex !important;
-  }
-  
-  .desktop-sessions-table {
-    display: none !important;
-  }
-
   .g-stats-grid-3 {
     grid-template-columns: 1fr !important;
     gap: 10px !important;
@@ -2980,6 +2987,14 @@ tr:hover td {
   .g-filter-grid {
     grid-template-columns: 1fr !important;
     gap: 12px !important;
+  }
+
+  .mobile-sessions-list {
+    display: flex !important;
+  }
+  
+  .desktop-sessions-table {
+    display: none !important;
   }
 
   .g-dashboard-header {
@@ -2993,7 +3008,7 @@ tr:hover td {
   }
 
   .g-stats-grid {
-    grid-template-columns: 1fr 1fr !important;
+    grid-template-columns: 1fr !important;
     gap: 10px !important;
   }
 
@@ -3011,4 +3026,5 @@ tr:hover td {
     display: block !important;
   }
 }
+
 
